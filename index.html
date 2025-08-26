@@ -1,0 +1,174 @@
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>SavingsVault ZCHF Frontend</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js"></script>
+</head>
+<body style="font-family: sans-serif; padding: 20px;">
+  <h2>SavingsVault ZCHF Frontend</h2>
+
+
+  <button id="connectMetaMaskBtn">Connecter Metamask</button>
+  <button id="connectRabbyBtn">Connecter Rabby</button>
+  <p id="address"></p>
+
+
+  <p>Solde ZCHF : <span id="zchfBalance">0</span></p>
+  <p>Solde svZCHF : <span id="sharesBalance">0</span></p>
+  <p>APY actuel : <span id="apy">...</span>%</p>
+
+
+  <input type="text" id="amount" placeholder="Montant en ZCHF" />
+  <br><br>
+  <button id="depositBtn">Déposer</button>
+  <button id="redeemBtn">Retirer</button>
+  <button id="refreshBtn">Recharger</button>
+
+
+  <script>
+    const VAULT_ADDRESS   = "0x637F00cAb9665cB07d91bfB9c6f3fa8faBFEF8BC"; // SavingsVaultZCHF
+    const ZCHF_ADDRESS    = "0xC4f4F7B7fEf95a80F1A2E7e6D74e3e97560e4C35"; // Token ZCHF ERC20
+    const SAVINGS_ADDRESS = "0x27d9c11c246F01f47aa61D6b0Bfd7f52F6C37b38"; // Savings.sol
+
+
+    const VAULT_ABI = [
+      "function deposit(uint256 assets, address receiver) returns (uint256 shares)",
+      "function redeem(uint256 shares, address receiver, address owner) returns (uint256 assets)",
+      "function balanceOf(address account) view returns (uint256)",
+      "function convertToAssets(uint256 shares) view returns (uint256)"
+    ];
+
+
+    const ERC20_ABI = [
+      "function approve(address spender, uint256 amount) returns (bool)",
+      "function allowance(address owner, address spender) view returns (uint256)",
+      "function balanceOf(address account) view returns (uint256)",
+      "function decimals() view returns (uint8)"
+    ];
+
+
+    const SAVINGS_ABI = [
+      "function interestRate() view returns (uint32)"
+    ];
+
+
+    let provider, signer, userAddress;
+    let zchf, vault, savings, decimals;
+
+
+    async function connect(wallet = "metamask") {
+      let injected;
+
+
+      // cas metamask
+      if (wallet === "metamask") {
+        if (!window.ethereum) {
+          alert("Metamask non trouvé");
+          return;
+        }
+        // Metamask peut coexister avec Rabby → on choisit le provider metamask explicitement
+        if (window.ethereum.providers) {
+          injected = window.ethereum.providers.find((p) => p.isMetaMask);
+        } else {
+          injected = window.ethereum;
+        }
+      }
+
+
+      // cas rabby
+      if (wallet === "rabby") {
+        if (window.rabby) {
+          injected = window.rabby;
+        } else if (window.ethereum && window.ethereum.isRabby) {
+          injected = window.ethereum;
+        } else if (window.ethereum?.providers) {
+          injected = window.ethereum.providers.find((p) => p.isRabby);
+        }
+        if (!injected) {
+          alert("Rabby Wallet non trouvé");
+          return;
+        }
+      }
+
+
+      provider = new ethers.BrowserProvider(injected);
+      signer   = await provider.getSigner();
+      userAddress = await signer.getAddress();
+      document.getElementById("address").textContent = "Adresse : " + userAddress;
+
+
+      zchf     = new ethers.Contract(ZCHF_ADDRESS, ERC20_ABI, signer);
+      vault    = new ethers.Contract(VAULT_ADDRESS, VAULT_ABI, signer);
+      savings  = new ethers.Contract(SAVINGS_ADDRESS, SAVINGS_ABI, signer);
+
+
+      decimals = await zchf.decimals();
+
+
+      await loadBalances();
+      await loadAPY();
+    }
+
+
+    async function loadBalances() {
+      if (!signer) return;
+      const balZCHF   = await zchf.balanceOf(userAddress);
+      const balShares = await vault.balanceOf(userAddress);
+
+
+      document.getElementById("zchfBalance").textContent   = ethers.formatUnits(balZCHF, decimals);
+      document.getElementById("sharesBalance").textContent = ethers.formatUnits(balShares, decimals);
+    }
+
+
+    async function loadAPY() {
+      const rate = await savings.interestRate();
+      const apy = Number(rate) / 10000; // ppm → %
+      document.getElementById("apy").textContent = apy.toFixed(2);
+    }
+
+
+    async function deposit() {
+      const amount = document.getElementById("amount").value;
+      if (!amount) return;
+      const parsed = ethers.parseUnits(amount, decimals);
+
+
+      let tx1 = await zchf.approve(VAULT_ADDRESS, parsed);
+      await tx1.wait();
+
+
+      let tx2 = await vault.deposit(parsed, userAddress);
+      await tx2.wait();
+
+
+      await loadBalances();
+      alert("Dépôt effectué !");
+    }
+
+
+    async function redeem() {
+      const amount = document.getElementById("amount").value;
+      if (!amount) return;
+      const parsed = ethers.parseUnits(amount, decimals);
+
+
+      let tx = await vault.redeem(parsed, userAddress, userAddress);
+      await tx.wait();
+
+
+      await loadBalances();
+      alert("Retrait effectué !");
+    }
+
+
+    // événements UI
+    document.getElementById("connectMetaMaskBtn").onclick = () => connect("metamask");
+    document.getElementById("connectRabbyBtn").onclick = () => connect("rabby");
+    document.getElementById("refreshBtn").onclick = () => { loadBalances(); loadAPY(); };
+    document.getElementById("depositBtn").onclick = deposit;
+    document.getElementById("redeemBtn").onclick = redeem;
+  </script>
+</body>
+</html>
